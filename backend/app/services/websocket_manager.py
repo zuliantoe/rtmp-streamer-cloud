@@ -1,4 +1,4 @@
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 from fastapi import WebSocket
 
@@ -6,6 +6,7 @@ from fastapi import WebSocket
 class SessionWebSocketManager:
     def __init__(self) -> None:
         self.session_to_clients: Dict[int, Set[WebSocket]] = {}
+        self.session_last_stats: Dict[int, dict] = {}
 
     async def connect(self, session_id: int, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -25,6 +26,12 @@ class SessionWebSocketManager:
             except Exception:
                 # best-effort - clean up dead sockets
                 self.disconnect(session_id, ws)
+
+    def update_last_stats(self, session_id: int, stats: dict) -> None:
+        self.session_last_stats[session_id] = stats
+
+    def get_last_stats(self, session_id: int) -> Optional[dict]:
+        return self.session_last_stats.get(session_id)
 
 
 ws_manager = SessionWebSocketManager()

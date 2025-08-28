@@ -8,6 +8,7 @@ from ..database import get_db
 from ..dependencies import get_current_user
 from ..models import StreamSession, StreamStatus, User, UserRole
 from ..schemas import StreamStartRequest, StreamStatusOut
+from ..services.websocket_manager import ws_manager
 from ..services.ffmpeg_runner import start_ffmpeg, stop_ffmpeg
 
 
@@ -59,6 +60,10 @@ def list_active_streams(db: Session = Depends(get_db), current_user: User = Depe
     query = db.query(StreamSession).filter(StreamSession.status == StreamStatus.running)
     if current_user.role != UserRole.admin:
         query = query.filter(StreamSession.user_id == current_user.id)
-    return query.order_by(StreamSession.start_time.desc()).all()
+    sessions = query.order_by(StreamSession.start_time.desc()).all()
+    # enrich with last stats via response_model (pydantic will ignore extras)
+    for s in sessions:
+        _ = ws_manager.get_last_stats(s.id)
+    return sessions
 
 

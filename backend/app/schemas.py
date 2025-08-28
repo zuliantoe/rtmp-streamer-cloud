@@ -82,6 +82,11 @@ class StreamStatusOut(BaseModel):
     start_time: Optional[datetime]
     end_time: Optional[datetime]
     avg_bitrate: Optional[str]
+    # optional stats fields (enriched via WS cache)
+    rtmp_url: Optional[str] = None
+    bitrate: Optional[str] = None
+    fps: Optional[str] = None
+    dropped_frames: Optional[str] = None
 
     class Config:
         orm_mode = True

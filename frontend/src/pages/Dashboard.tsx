@@ -166,9 +166,10 @@ export default function Dashboard() {
             <h2 className="font-semibold mb-2">Videos</h2>
             <ul className="space-y-1 max-h-64 overflow-auto">
               {videos.map(v => (
-                <li key={v.id} className="flex items-center justify-between">
-                  <button className={`text-left ${selectedType==='video'&&selectedId===v.id?'font-semibold':''}`} onClick={() => { setSelectedType('video'); setSelectedId(v.id); setMode('once') }}>{v.filename}</button>
+                <li key={v.id} className="flex items-center justify-between gap-2">
+                  <button className={`flex-1 text-left ${selectedType==='video'&&selectedId===v.id?'font-semibold':''}`} onClick={() => { setSelectedType('video'); setSelectedId(v.id); setMode('once') }}>{v.filename}</button>
                   <a className="text-blue-600 text-sm" href={toVideoUrl(v.filepath)} target="_blank">preview</a>
+                  <button className="text-red-600 text-sm" onClick={async ()=>{ await api.delete(`/api/videos/${v.id}`); refresh() }}>delete</button>
                 </li>
               ))}
             </ul>
@@ -228,12 +229,24 @@ export default function Dashboard() {
               <h2 className="font-semibold">Active Streams</h2>
               <button className="text-sm text-blue-600" onClick={refreshActive}>Refresh</button>
             </div>
-            <ul className="text-sm space-y-1 max-h-48 overflow-auto">
+            <ul className="text-sm space-y-2 max-h-64 overflow-auto">
               {active.length === 0 && <li className="text-gray-500">No active streams</li>}
               {active.map((s:any) => (
-                <li key={s.id} className="flex items-center justify-between">
-                  <span>#{s.id} • {s.status} • PID {s.pid??'-'}</span>
-                  <button className="text-red-600" onClick={() => api.post(`/api/streams/stop/${s.id}`).then(refreshActive)}>Stop</button>
+                <li key={s.id} className="border rounded p-2">
+                  <div className="flex items-center justify-between">
+                    <span>#{s.id} • {s.status} • PID {s.pid??'-'}</span>
+                    <div className="flex gap-2">
+                      <button className="text-blue-600" onClick={() => setSessionId(s.id)}>Attach</button>
+                      <button className="text-red-600" onClick={() => api.post(`/api/streams/stop/${s.id}`).then(refreshActive)}>Stop</button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mt-1 text-xs text-gray-700">
+                    <div><span className="text-gray-500">RTMP:</span> {s.rtmp_url || '-'}</div>
+                    <div><span className="text-gray-500">Bitrate:</span> {s.bitrate || s.avg_bitrate || '-'}</div>
+                    <div><span className="text-gray-500">FPS:</span> {s.fps || '-'}</div>
+                    <div><span className="text-gray-500">Dropped:</span> {s.dropped_frames || '-'}</div>
+                    <div><span className="text-gray-500">Start:</span> {s.start_time ? new Date(s.start_time).toLocaleString() : '-'}</div>
+                  </div>
                 </li>
               ))}
             </ul>

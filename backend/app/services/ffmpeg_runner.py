@@ -154,16 +154,18 @@ async def start_ffmpeg(db: Session, session: StreamSession) -> int:
             stats = _parse_stats(line)
             if stats:
                 last_stats = stats
+                msg = {
+                    "type": "stats",
+                    "bitrate": stats.bitrate,
+                    "fps": stats.fps,
+                    "dropped_frames": stats.dropped_frames,
+                    "rtmp_url": session.destination,
+                    "status": session.status.value,
+                }
+                ws_manager.update_last_stats(session.id, msg)
                 await ws_manager.broadcast(
                     session.id,
-                    {
-                        "type": "stats",
-                        "bitrate": stats.bitrate,
-                        "fps": stats.fps,
-                        "dropped_frames": stats.dropped_frames,
-                        "rtmp_url": session.destination,
-                        "status": session.status.value,
-                    },
+                    msg,
                 )
         # process finished
         await process.wait()
@@ -172,14 +174,16 @@ async def start_ffmpeg(db: Session, session: StreamSession) -> int:
         if last_stats and last_stats.bitrate:
             session.avg_bitrate = last_stats.bitrate
         db.commit()
+        final = {
+            "type": "status",
+            "status": session.status.value,
+            "rtmp_url": session.destination,
+            "avg_bitrate": session.avg_bitrate,
+        }
+        ws_manager.update_last_stats(session.id, final)
         await ws_manager.broadcast(
             session.id,
-            {
-                "type": "status",
-                "status": session.status.value,
-                "rtmp_url": session.destination,
-                "avg_bitrate": session.avg_bitrate,
-            },
+            final,
         )
 
     asyncio.create_task(_pump_and_wait())

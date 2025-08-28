@@ -12,6 +12,7 @@ export default function Dashboard() {
 
   const [videos, setVideos] = useState<Video[]>([])
   const [playlists, setPlaylists] = useState<Playlist[]>([])
+  const [uploading, setUploading] = useState(false)
   const [selectedType, setSelectedType] = useState<'video'|'playlist'>('video')
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [rtmp, setRtmp] = useState('rtmp://example.com/live/streamkey')
@@ -20,6 +21,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState<any>({})
 
   const ws = useRef<WebSocket | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [wsStatus, setWsStatus] = useState<'disconnected'|'connecting'|'connected'>('disconnected')
   const [pingMs, setPingMs] = useState<number | null>(null)
   const pingNonce = useRef<number>(0)
@@ -39,10 +41,16 @@ export default function Dashboard() {
   async function onUpload(e: any) {
     const file = e.target.files?.[0]
     if (!file) return
-    const form = new FormData()
-    form.append('file', file)
-    await api.post('/api/videos/upload', form)
-    await refresh()
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      await api.post('/api/videos/upload', form)
+      await refresh()
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
   }
 
   const apiBase = useMemo(() => (API_BASE || '').replace(/\/$/, ''), [])
@@ -114,9 +122,17 @@ export default function Dashboard() {
 
       <div className="grid md:grid-cols-2 gap-6">
         <div className="space-y-4">
-          <div className="bg-white p-4 rounded shadow">
-            <h2 className="font-semibold mb-2">Upload Video</h2>
-            <input type="file" accept="video/mp4" onChange={onUpload} />
+          <div className="bg-white p-4 rounded shadow space-y-2">
+            <h2 className="font-semibold">Upload Video</h2>
+            <input ref={fileInputRef} type="file" accept="video/mp4" className="hidden" onChange={onUpload} />
+            <button
+              className="inline-flex items-center gap-2 bg-blue-600 text-white px-3 py-1.5 rounded disabled:opacity-60"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+            >
+              {uploading ? 'Uploading...' : 'Upload MP4'}
+            </button>
+            <div className="text-xs text-gray-500">Maksimal: file .mp4 (H.264/AAC)</div>
           </div>
 
           <div className="bg-white p-4 rounded shadow">

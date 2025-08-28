@@ -23,6 +23,9 @@ class Settings:
         # CORS
         self.cors_origins: str = os.getenv("CORS_ORIGINS", "*")
 
+        # Streaming behavior
+        self.auto_restart_streams: bool = os.getenv("AUTO_RESTART_STREAMS", "1") not in ("0", "false", "False")
+
 
 settings = Settings()
 

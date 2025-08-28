@@ -1,12 +1,12 @@
 import asyncio
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..dependencies import get_current_user
-from ..models import StreamSession, StreamStatus, User
+from ..models import StreamSession, StreamStatus, User, UserRole
 from ..schemas import StreamStartRequest, StreamStatusOut
 from ..services.ffmpeg_runner import start_ffmpeg, stop_ffmpeg
 
@@ -30,7 +30,7 @@ async def start_stream(payload: StreamStartRequest, db: Session = Depends(get_db
         source_id=payload.source_id,
         destination=payload.destination,
         mode=payload.mode,
-        status=StreamStatus.stopped,
+        status=StreamStatus.running,
     )
     db.add(session)
     db.commit()
@@ -52,5 +52,13 @@ def stop_stream(session_id: int, db: Session = Depends(get_db), current_user: Us
         session.pid = None
     db.commit()
     return {"status": "stopped"}
+
+
+@router.get("/active", response_model=List[StreamStatusOut])
+def list_active_streams(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    query = db.query(StreamSession).filter(StreamSession.status == StreamStatus.running)
+    if current_user.role != UserRole.admin:
+        query = query.filter(StreamSession.user_id == current_user.id)
+    return query.order_by(StreamSession.start_time.desc()).all()
 
 

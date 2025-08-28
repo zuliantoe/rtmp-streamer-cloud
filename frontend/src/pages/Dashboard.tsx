@@ -19,6 +19,7 @@ export default function Dashboard() {
   const [mode, setMode] = useState<'once'|'loop_video'|'loop_playlist'>('once')
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [stats, setStats] = useState<any>({})
+  const [active, setActive] = useState<any[]>([])
 
   const ws = useRef<WebSocket | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -36,7 +37,30 @@ export default function Dashboard() {
     setPlaylists(p.data)
   }
 
-  useEffect(() => { refresh() }, [])
+  useEffect(() => { refresh(); refreshActive() }, [])
+  // restore session after reload
+  useEffect(() => {
+    const sid = localStorage.getItem('current_session_id')
+    if (sid) {
+      const id = Number(sid)
+      setSessionId(id)
+      const wsBase = API_BASE.replace('http', 'ws')
+      setWsStatus('connecting')
+      ws.current = new WebSocket(wsBase + `/ws/streams/${id}`)
+      ws.current.onopen = () => setWsStatus('connected')
+      ws.current.onclose = () => { setWsStatus('disconnected'); setPingMs(null) }
+      ws.current.onmessage = (ev) => {
+        try { setStats(JSON.parse(ev.data)) } catch {}
+      }
+    }
+  }, [])
+
+  async function refreshActive() {
+    try {
+      const { data } = await api.get('/api/streams/active')
+      setActive(data)
+    } catch {}
+  }
 
   async function onUpload(e: any) {
     const file = e.target.files?.[0]
@@ -76,6 +100,7 @@ export default function Dashboard() {
       mode,
     })
     setSessionId(data.id)
+    localStorage.setItem('current_session_id', String(data.id))
     const wsBase = API_BASE.replace('http', 'ws')
     setWsStatus('connecting')
     ws.current = new WebSocket(wsBase + `/ws/streams/${data.id}`)
@@ -110,7 +135,9 @@ export default function Dashboard() {
     if (!sessionId) return
     await api.post(`/api/streams/stop/${sessionId}`)
     setSessionId(null)
+    localStorage.removeItem('current_session_id')
     ws.current?.close()
+    refreshActive()
   }
 
   return (
@@ -194,6 +221,22 @@ export default function Dashboard() {
               <div><span className="text-gray-500">Status:</span> {stats.status || (sessionId?'running':'stopped')}</div>
               <div><span className="text-gray-500">WS:</span> {wsStatus}{pingMs!=null?` (${pingMs}ms)`:''}</div>
             </div>
+          </div>
+
+          <div className="bg-white p-4 rounded shadow">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-semibold">Active Streams</h2>
+              <button className="text-sm text-blue-600" onClick={refreshActive}>Refresh</button>
+            </div>
+            <ul className="text-sm space-y-1 max-h-48 overflow-auto">
+              {active.length === 0 && <li className="text-gray-500">No active streams</li>}
+              {active.map((s:any) => (
+                <li key={s.id} className="flex items-center justify-between">
+                  <span>#{s.id} • {s.status} • PID {s.pid??'-'}</span>
+                  <button className="text-red-600" onClick={() => api.post(`/api/streams/stop/${s.id}`).then(refreshActive)}>Stop</button>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       </div>

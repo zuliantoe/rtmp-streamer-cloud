@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -52,6 +53,27 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health() -> dict:
         return {"status": "ok", "app": settings.app_name}
+
+    if settings.auto_restart_streams:
+        from .database import SessionLocal
+        from .models import StreamSession, StreamStatus
+        from .services.ffmpeg_runner import start_ffmpeg
+
+        async def restart_running_streams() -> None:
+            db = SessionLocal()
+            try:
+                sessions = db.query(StreamSession).filter(StreamSession.status == StreamStatus.running).all()
+                for s in sessions:
+                    # reset pid to ensure fresh process
+                    s.pid = None
+                    db.commit()
+                    await start_ffmpeg(db, s)
+            finally:
+                db.close()
+
+        @app.on_event("startup")
+        async def _startup_restart():
+            asyncio.create_task(restart_running_streams())
 
     return app
 

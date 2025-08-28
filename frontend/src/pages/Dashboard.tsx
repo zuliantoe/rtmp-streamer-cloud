@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import api from '../lib/api'
+import api, { API_BASE } from '../lib/api'
 
 type Video = { id: number; filename: string; filepath: string }
 type Playlist = { id: number; name: string; items: { id: number; video_id: number; order_index: number }[] }
@@ -45,7 +45,7 @@ export default function Dashboard() {
     await refresh()
   }
 
-  const apiBase = useMemo(() => ((import.meta as any).env?.VITE_API_BASE || 'http://localhost:8000').replace(/\/$/, ''), [])
+  const apiBase = useMemo(() => (API_BASE || '').replace(/\/$/, ''), [])
   function toVideoUrl(fp: string) {
     const idx = fp.indexOf('/videos/')
     const path = idx >= 0 ? fp.substring(idx) : `/videos/${fp.split('/').pop()}`
@@ -68,9 +68,9 @@ export default function Dashboard() {
       mode,
     })
     setSessionId(data.id)
-    const url = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:8000'
+    const wsBase = API_BASE.replace('http', 'ws')
     setWsStatus('connecting')
-    ws.current = new WebSocket(url.replace('http', 'ws') + `/ws/streams/${data.id}`)
+    ws.current = new WebSocket(wsBase + `/ws/streams/${data.id}`)
     ws.current.onopen = () => setWsStatus('connected')
     ws.current.onclose = () => { setWsStatus('disconnected'); setPingMs(null) }
     ws.current.onmessage = (ev) => {

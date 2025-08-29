@@ -17,16 +17,13 @@ export default function Dashboard() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [rtmp, setRtmp] = useState('rtmp://example.com/live/streamkey')
   const [mode, setMode] = useState<'once'|'loop_video'|'loop_playlist'>('once')
-  const [sessionId, setSessionId] = useState<number | null>(null)
-  const [stats, setStats] = useState<any>({})
+  // Multi-attach state: sessionId -> { wsStatus, pingMs, stats }
+  const [attached, setAttached] = useState<Record<number, { wsStatus: 'disconnected'|'connecting'|'connected', pingMs: number | null, stats: any }>>({})
   const [active, setActive] = useState<any[]>([])
 
-  const ws = useRef<WebSocket | null>(null)
+  const socketsRef = useRef<Record<number, { ws: WebSocket, pingNonce: number, pingSentAt: number, interval?: number }>>({})
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const [wsStatus, setWsStatus] = useState<'disconnected'|'connecting'|'connected'>('disconnected')
-  const [pingMs, setPingMs] = useState<number | null>(null)
-  const pingNonce = useRef<number>(0)
-  const pingSentAt = useRef<number>(0)
+  
 
   async function refresh() {
     const [v, p] = await Promise.all([
@@ -38,21 +35,14 @@ export default function Dashboard() {
   }
 
   useEffect(() => { refresh(); refreshActive() }, [])
-  // restore session after reload
+  // restore attachments after reload
   useEffect(() => {
-    const sid = localStorage.getItem('current_session_id')
-    if (sid) {
-      const id = Number(sid)
-      setSessionId(id)
-      const wsBase = API_BASE.replace('http', 'ws')
-      setWsStatus('connecting')
-      ws.current = new WebSocket(wsBase + `/ws/streams/${id}`)
-      ws.current.onopen = () => setWsStatus('connected')
-      ws.current.onclose = () => { setWsStatus('disconnected'); setPingMs(null) }
-      ws.current.onmessage = (ev) => {
-        try { setStats(JSON.parse(ev.data)) } catch {}
-      }
-    }
+    try {
+      const raw = localStorage.getItem('attached_session_ids')
+      if (!raw) return
+      const ids: number[] = JSON.parse(raw)
+      ids.forEach(id => attachSession(id))
+    } catch {}
   }, [])
 
   async function refreshActive() {
@@ -99,44 +89,73 @@ export default function Dashboard() {
       destination: rtmp,
       mode,
     })
-    setSessionId(data.id)
-    localStorage.setItem('current_session_id', String(data.id))
-    const wsBase = API_BASE.replace('http', 'ws')
-    setWsStatus('connecting')
-    ws.current = new WebSocket(wsBase + `/ws/streams/${data.id}`)
-    ws.current.onopen = () => setWsStatus('connected')
-    ws.current.onclose = () => { setWsStatus('disconnected'); setPingMs(null) }
-    ws.current.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data)
-        if (msg?.type === 'pong' && msg?.nonce === pingNonce.current) {
-          const now = Date.now()
-          const rtt = now - pingSentAt.current
-          setPingMs(rtt)
-          return
-        }
-        setStats(msg)
-      } catch {}
-    }
-    // heartbeat
-    const interval = setInterval(() => {
-      if (ws.current && ws.current.readyState === ws.current.OPEN) {
-        pingNonce.current = (pingNonce.current + 1) % 1e9
-        pingSentAt.current = Date.now()
-        ws.current.send(JSON.stringify({ type: 'ping', nonce: pingNonce.current, client_time: pingSentAt.current }))
-      }
-    }, 5000)
-    // cleanup
-    const sock = ws.current
-    sock.addEventListener('close', () => clearInterval(interval))
+    attachSession(data.id)
+    refreshActive()
   }
 
-  async function stopStreaming() {
-    if (!sessionId) return
-    await api.post(`/api/streams/stop/${sessionId}`)
-    setSessionId(null)
-    localStorage.removeItem('current_session_id')
-    ws.current?.close()
+  function persistAttachedIds(ids: number[]) {
+    localStorage.setItem('attached_session_ids', JSON.stringify(ids))
+  }
+
+  function attachSession(id: number) {
+    if (socketsRef.current[id]) return
+    const wsBase = API_BASE.replace('http', 'ws')
+    const ws = new WebSocket(wsBase + `/ws/streams/${id}`)
+    socketsRef.current[id] = { ws, pingNonce: 0, pingSentAt: 0 }
+    setAttached(prev => ({ ...prev, [id]: { wsStatus: 'connecting', pingMs: null, stats: {} } }))
+    ws.onopen = () => {
+      setAttached(prev => ({ ...prev, [id]: { ...prev[id], wsStatus: 'connected' } }))
+    }
+    ws.onclose = () => {
+      setAttached(prev => ({ ...prev, [id]: { ...prev[id], wsStatus: 'disconnected', pingMs: null } }))
+      const r = socketsRef.current[id]
+      if (r?.interval) clearInterval(r.interval)
+    }
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data)
+        if (msg?.type === 'pong') {
+          const now = Date.now()
+          const rtt = now - (socketsRef.current[id]?.pingSentAt || now)
+          setAttached(prev => ({ ...prev, [id]: { ...prev[id], pingMs: rtt } }))
+          return
+        }
+        setAttached(prev => ({ ...prev, [id]: { ...prev[id], stats: msg } }))
+      } catch {}
+    }
+    const interval = window.setInterval(() => {
+      const rec = socketsRef.current[id]
+      if (!rec) return
+      if (rec.ws.readyState === rec.ws.OPEN) {
+        rec.pingNonce = (rec.pingNonce + 1) % 1e9
+        rec.pingSentAt = Date.now()
+        rec.ws.send(JSON.stringify({ type: 'ping', nonce: rec.pingNonce, client_time: rec.pingSentAt }))
+      }
+    }, 5000)
+    socketsRef.current[id].interval = interval
+    const ids = Object.keys(socketsRef.current).map(k => Number(k))
+    persistAttachedIds(ids)
+  }
+
+  function detachSession(id: number) {
+    const rec = socketsRef.current[id]
+    if (rec) {
+      try { rec.ws.close() } catch {}
+      if (rec.interval) clearInterval(rec.interval)
+    }
+    delete socketsRef.current[id]
+    setAttached(prev => {
+      const copy = { ...prev }
+      delete copy[id]
+      return copy
+    })
+    const ids = Object.keys(socketsRef.current).map(k => Number(k))
+    persistAttachedIds(ids)
+  }
+
+  async function stopAndDetach(id: number) {
+    await api.post(`/api/streams/stop/${id}`)
+    detachSession(id)
     refreshActive()
   }
 
@@ -208,19 +227,32 @@ export default function Dashboard() {
             </div>
             <div className="flex gap-2">
               <button className="bg-green-600 text-white px-3 py-1 rounded" onClick={startStreaming} disabled={!selectedId}>Start</button>
-              <button className="bg-gray-600 text-white px-3 py-1 rounded" onClick={stopStreaming} disabled={!sessionId}>Stop</button>
+              <button className="bg-gray-400 text-white px-3 py-1 rounded opacity-60 cursor-not-allowed" title="Use Active Streams to stop specific sessions" disabled>Stop</button>
             </div>
           </div>
 
           <div className="bg-white p-4 rounded shadow">
-            <h2 className="font-semibold mb-2">Live Stats</h2>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <div><span className="text-gray-500">RTMP:</span> {stats.rtmp_url || '-'}</div>
-              <div><span className="text-gray-500">Bitrate:</span> {stats.bitrate || '-'}</div>
-              <div><span className="text-gray-500">FPS:</span> {stats.fps || '-'}</div>
-              <div><span className="text-gray-500">Dropped:</span> {stats.dropped_frames || '-'}</div>
-              <div><span className="text-gray-500">Status:</span> {stats.status || (sessionId?'running':'stopped')}</div>
-              <div><span className="text-gray-500">WS:</span> {wsStatus}{pingMs!=null?` (${pingMs}ms)`:''}</div>
+            <h2 className="font-semibold mb-2">Attached Streams (Live)</h2>
+            {Object.keys(attached).length === 0 && <div className="text-sm text-gray-500">No attachments</div>}
+            <div className="grid gap-2">
+              {Object.entries(attached).map(([id, info]) => (
+                <div key={id} className="border rounded p-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <div>#{id} • {info.wsStatus}{info.pingMs!=null?` (${info.pingMs}ms)`:''}</div>
+                    <div className="flex gap-2">
+                      <button className="text-red-600" onClick={() => stopAndDetach(Number(id))}>Stop</button>
+                      <button className="text-gray-700" onClick={() => detachSession(Number(id))}>Detach</button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <div><span className="text-gray-500">RTMP:</span> {info.stats?.rtmp_url || '-'}</div>
+                    <div><span className="text-gray-500">Bitrate:</span> {info.stats?.bitrate || '-'}</div>
+                    <div><span className="text-gray-500">FPS:</span> {info.stats?.fps || '-'}</div>
+                    <div><span className="text-gray-500">Dropped:</span> {info.stats?.dropped_frames || '-'}</div>
+                    <div><span className="text-gray-500">Status:</span> {info.stats?.status || '-'}</div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -236,8 +268,12 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between">
                     <span>#{s.id} • {s.status} • PID {s.pid??'-'}</span>
                     <div className="flex gap-2">
-                      <button className="text-blue-600" onClick={() => setSessionId(s.id)}>Attach</button>
-                      <button className="text-red-600" onClick={() => api.post(`/api/streams/stop/${s.id}`).then(refreshActive)}>Stop</button>
+                      {attached[s.id] ? (
+                        <button className="text-gray-700" onClick={() => detachSession(s.id)}>Detach</button>
+                      ) : (
+                        <button className="text-blue-600" onClick={() => attachSession(s.id)}>Attach</button>
+                      )}
+                      <button className="text-red-600" onClick={() => stopAndDetach(s.id)}>Stop</button>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 mt-1 text-xs text-gray-700">

@@ -13,6 +13,7 @@ export default function Dashboard() {
   const [videos, setVideos] = useState<Video[]>([])
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [uploading, setUploading] = useState(false)
+  const [uploadPct, setUploadPct] = useState<number>(0)
   const [selectedType, setSelectedType] = useState<'video'|'playlist'>('video')
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [rtmp, setRtmp] = useState('rtmp://example.com/live/streamkey')
@@ -59,10 +60,15 @@ export default function Dashboard() {
     try {
       const form = new FormData()
       form.append('file', file)
-      await api.post('/api/videos/upload', form)
+      await api.post('/api/videos/upload', form, {
+        onUploadProgress: (e) => {
+          if (e.total) setUploadPct(Math.round((e.loaded / e.total) * 100))
+        }
+      })
       await refresh()
     } finally {
       setUploading(false)
+      setUploadPct(0)
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -176,7 +182,7 @@ export default function Dashboard() {
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
             >
-              {uploading ? 'Uploading...' : 'Upload MP4'}
+              {uploading ? `Uploading ${uploadPct}%` : 'Upload MP4'}
             </button>
             <div className="text-xs text-gray-500">Maksimal: file .mp4 (H.264/AAC)</div>
           </div>

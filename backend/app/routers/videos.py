@@ -37,9 +37,13 @@ async def upload_video(
         stem = Path(safe_name).stem
         dest_path = target_dir / f"{stem}_{idx}.mp4"
         idx += 1
-    content = await file.read()
+    # Stream to disk in chunks to avoid loading entire file into memory
     with open(dest_path, "wb") as f:
-        f.write(content)
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
 
     video = Video(filename=dest_path.name, filepath=str(dest_path), uploaded_by=current_user.id)
     db.add(video)
